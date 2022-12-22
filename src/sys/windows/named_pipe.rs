@@ -539,7 +539,7 @@ impl<'a> Read for &'a NamedPipe {
                     state.read = State::Ok(data, next);
                 } else {
                     self.inner.put_buffer(data);
-                    Inner::schedule_read(&self.inner, &mut state, None);
+                    Inner::schedule_read(&self.inner, &mut state, None, buf.len().into());
                 }
                 Ok(n)
             }
@@ -547,7 +547,7 @@ impl<'a> Read for &'a NamedPipe {
             // Looks like an in-flight read hit an error, return that here while
             // we schedule a new one.
             State::Err(e) => {
-                Inner::schedule_read(&self.inner, &mut state, None);
+                Inner::schedule_read(&self.inner, &mut state, None, buf.len().into());
                 if e.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
                     Ok(0)
                 } else {
@@ -581,7 +581,7 @@ impl<'a> Write for &'a NamedPipe {
         }
 
         // Move `buf` onto the heap and fire off the write
-        let mut owned_buf = self.inner.get_buffer();
+        let mut owned_buf = self.inner.get_buffer(1024 * 4);
         owned_buf.extend(buf);
         match Inner::maybe_schedule_write(&self.inner, owned_buf, 0, &mut io)? {
             // Some bytes are written immediately
@@ -693,7 +693,7 @@ impl Inner {
     /// is scheduled in the background. If the pipe is no longer connected
     /// (ERROR_PIPE_LISTENING) then `false` is returned and no read is
     /// scheduled.
-    fn schedule_read(me: &Arc<Inner>, io: &mut Io, events: Option<&mut Vec<Event>>) -> bool {
+    fn schedule_read(me: &Arc<Inner>, io: &mut Io, events: Option<&mut Vec<Event>>, read_size: Option<usize>) -> bool {
         // Check to see if a read is already scheduled/completed
         match io.read {
             State::None => {}
@@ -701,7 +701,7 @@ impl Inner {
         }
 
         // Allocate a buffer and schedule the read.
-        let mut buf = me.get_buffer();
+        let mut buf = me.get_buffer(read_size.unwrap_or(1024 * 4));
         let e = unsafe {
             let overlapped = me.read.as_ptr() as *mut _;
             let slice = slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.capacity());
@@ -795,15 +795,15 @@ impl Inner {
     fn post_register(me: &Arc<Inner>, mut events: Option<&mut Vec<Event>>) {
         let mut io = me.io.lock().unwrap();
         #[allow(clippy::needless_option_as_deref)]
-        if Inner::schedule_read(me, &mut io, events.as_deref_mut()) {
+        if Inner::schedule_read(me, &mut io, events.as_deref_mut(), None) {
             if let State::None = io.write {
                 io.notify_writable(events);
             }
         }
     }
 
-    fn get_buffer(&self) -> Vec<u8> {
-        self.pool.lock().unwrap().get(4 * 1024)
+    fn get_buffer(&self, size: usize) -> Vec<u8> {
+        self.pool.lock().unwrap().get(size)
     }
 
     fn put_buffer(&self, buf: Vec<u8>) {
