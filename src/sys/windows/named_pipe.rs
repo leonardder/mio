@@ -581,7 +581,7 @@ impl<'a> Write for &'a NamedPipe {
         }
 
         // Move `buf` onto the heap and fire off the write
-        let mut owned_buf = self.inner.get_buffer(1024 * 4);
+        let mut owned_buf = self.inner.get_buffer(2048 * 4);
         owned_buf.extend(buf);
         match Inner::maybe_schedule_write(&self.inner, owned_buf, 0, &mut io)? {
             // Some bytes are written immediately
@@ -701,7 +701,7 @@ impl Inner {
         }
 
         // Allocate a buffer and schedule the read.
-        let mut buf = me.get_buffer(read_size.unwrap_or(1024 * 4));
+        let mut buf = me.get_buffer(read_size.unwrap_or(2048 * 4));
         let e = unsafe {
             let overlapped = me.read.as_ptr() as *mut _;
             let slice = slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.capacity());
